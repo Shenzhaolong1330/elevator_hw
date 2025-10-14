@@ -119,17 +119,36 @@ score = distance * direction_factor + elevator.load_factor * 10 + request_count 
 
 ### 前提条件
 
-- Python 3.x 环境
+- Python 3.10 环境
+- Conda 环境管理器（用于批处理文件自动创建虚拟环境）
 - 安装所需依赖：`pip install flask flask-cors requests elevator_saga`
 
-### 运行步骤
+### 自动部署方式（推荐）
+
+项目提供了批处理文件，用于自动创建虚拟环境、安装依赖并启动整个系统：
+```bash
+start_elevator_system.bat
+```
+
+这些批处理文件将自动执行以下操作：
+- 创建名为 `elevator` 的 conda 虚拟环境
+- 安装项目所需的所有依赖包
+- 依次启动 elevator_saga 服务器、Flask 后端服务和电梯调度器
+- 自动打开前端 HTML 界面
+
+### 手动部署方式
 
 1. **启动后端服务**：
    ```bash
    python elevator_backend_flask.py
    ```
 
-2. **启动电梯控制器**（二选一）：
+2. **启动 elevator_saga 服务器**：
+   ```bash
+   python -m elevator_saga.server.simulator
+   ```
+
+3. **启动电梯控制器**（二选一）：
    - 使用 LOOK 算法调度器：
      ```bash
      python elevator_planner.py
@@ -139,7 +158,7 @@ score = distance * direction_factor + elevator.load_factor * 10 + request_count 
      python elevator_bus_modified.py
      ```
 
-3. **打开前端界面**：
+4. **打开前端界面**：
    直接在浏览器中打开 `elevator_frontend_html.html` 文件
 
 ### 调试模式
@@ -179,6 +198,15 @@ algorithm = ElevatorBusExampleController()
 ### 代码风格
 
 项目采用 PEP 8 代码风格规范，使用四个空格进行缩进，函数和类采用清晰的命名方式，并提供详细的文档字符串。
+
+### 依赖管理
+
+项目的依赖信息存储在 `requirements.txt` 文件中，包含以下主要依赖：
+
+- Flask >= 2.0.0
+- Flask-CORS >= 3.0.0
+- requests >= 2.0.0
+- elevator_saga >= 0.1.0
 
 ### 测试方法
 
