@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 from typing import List, Dict, Set, Optional
+import requests
+import json
 
 from elevator_saga.client.base_controller import ElevatorController
 from elevator_saga.client.proxy_models import ProxyElevator, ProxyFloor, ProxyPassenger
@@ -21,6 +23,79 @@ class ElevatorPlanner(ElevatorController):
         self.max_floor: int = 0  # 最大楼层数
         self.floors: List[ProxyFloor] = []  # 所有楼层
         self.elevators: List[ProxyElevator] = []  # 所有电梯
+        self.all_passengers: List[ProxyPassenger] = []  # 所有乘客
+        self.backend_url = "http://127.0.0.1:5000"  # 后端服务地址
+        self.current_tick = 0  # 当前时间刻度
+        self.events_log = []  # 事件日志
+        
+        # 尝试连接后端
+        self.backend_available = self._check_backend()
+    
+    def _check_backend(self) -> bool:
+        """检查后端服务是否可用"""
+        try:
+            response = requests.get(f"{self.backend_url}/health", timeout=2)
+            if response.status_code == 200:
+                print("✅ 后端服务连接成功")
+                return True
+        except Exception as e:
+            print(f"⚠️  后端服务不可用: {e}")
+            print("   继续运行，可视化功能将被禁用")
+        return False
+    
+    def _send_state_to_backend(self, elevators: List[ProxyElevator]) -> None:
+        """将电梯状态发送到后端"""
+        if not self.backend_available:
+            return
+        
+        try:
+            # 构建电梯数据
+            elevator_data = []
+            for elevator in elevators:
+                elevator_data.append({
+                    "id": elevator.id,
+                    "current_floor": round(elevator.current_floor_float, 1),
+                    "target_floor": elevator.target_floor,
+                    "passengers": len(elevator.passengers),
+                    "direction": elevator.target_floor_direction.value,
+                    "capacity": 8
+                })
+            
+            # 构建事件日志
+            events_data = [
+                {
+                    "type": e.type.value,
+                    "description": str(e)
+                }
+                for e in self.events_log[-10:]  # 只发送最后10个事件
+            ]
+
+            # 构建乘客数据
+            passengers_data = [
+                {
+                    "id": p.id,
+                    "origin": p.origin,
+                    "destination": p.destination
+                }
+                for p in self.all_passengers[-50:]  # 只发送最后50个乘客
+            ]
+
+            payload = {
+                "tick": self.current_tick,
+                "elevators": elevator_data,
+                "events": events_data,
+                "passengers": passengers_data,
+                "max_floor": self.max_floor
+            }
+
+            requests.post(
+                f"{self.backend_url}/api/update",
+                json=payload,
+                timeout=2
+            )
+        except Exception as e:
+            # 静默处理错误，不打断主程序
+            pass
 
     def on_init(self, elevators: List[ProxyElevator], floors: List[ProxyFloor]) -> None:
         """初始化电梯调度算法"""
@@ -50,6 +125,9 @@ class ElevatorPlanner(ElevatorController):
         self, tick: int, events: List[SimulationEvent], elevators: List[ProxyElevator], floors: List[ProxyFloor]
     ) -> None:
         """事件执行前的回调"""
+        self.current_tick = tick
+        self.events_log = events
+        
         if self.debug:
             print(f"Tick {tick}: 即将处理 {len(events)} 个事件 {[e.type.value for e in events]}")
             for elevator in elevators:
@@ -64,12 +142,18 @@ class ElevatorPlanner(ElevatorController):
         self, tick: int, events: List[SimulationEvent], elevators: List[ProxyElevator], floors: List[ProxyFloor]
     ) -> None:
         """事件执行后的回调"""
+        # 将电梯状态发送到后端
+        self._send_state_to_backend(elevators)
+        
         # 更新电梯状态并确保电梯持续运行
         for elevator in elevators:
             self._ensure_elevator_has_target(elevator)
 
     def on_passenger_call(self, passenger: ProxyPassenger, floor: ProxyFloor, direction: str) -> None:
         """乘客呼叫时的回调"""
+        # 记录乘客信息
+        self.all_passengers.append(passenger)
+        
         if self.debug:
             print(f"👤 乘客 {passenger.id} 在 F{floor.floor} 请求 {passenger.origin} -> {passenger.destination} ({direction})")
         
@@ -226,6 +310,9 @@ class ElevatorPlanner(ElevatorController):
 
 
 if __name__ == "__main__":
+    print("\n" + "=" * 60)
+    print("🚀 启动基于LOOK算法的电梯调度系统")
+    print("=" * 60)
     # 创建电梯调度器实例并启动
     planner = ElevatorPlanner(debug=True)
     planner.start()
