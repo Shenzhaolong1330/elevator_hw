@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🛗 电梯调度可视化系统</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', 'SimHei', sans-serif;
+            background: linear-gradient(135deg, #1e3a8a 0%, #0c4a6e 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .subtitle {
+            color: #93c5fd;
+            font-size: 1.1em;
+        }
+
+        .control-panel {
+            background: rgba(30, 58, 138, 0.7);
+            border: 2px solid #3b82f6;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn-play {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+        }
+
+        .btn-play:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(16, 185, 129, 0.4);
+        }
+
+        .btn-pause {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+        }
+
+        .btn-pause:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(239, 68, 68, 0.4);
+        }
+
+        .btn-reset {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+        }
+
+        .btn-reset:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(245, 158, 11, 0.4);
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        label {
+            font-weight: bold;
+            color: #fbbf24;
+            min-width: 80px;
+        }
+
+        input[type="range"] {
+            width: 200px;
+            height: 8px;
+            cursor: pointer;
+        }
+
+        .status-info {
+            margin-left: auto;
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #fbbf24;
+            text-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
+        }
+
+        .elevator-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .elevator-card {
+            background: rgba(30, 58, 138, 0.7);
+            border: 2px solid #3b82f6;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s ease;
+        }
+
+        .elevator-card:hover {
+            border-color: #60a5fa;
+            box-shadow: 0 12px 40px rgba(59, 130, 246, 0.3);
+        }
+
+        .elevator-title {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #fbbf24;
+        }
+
+        .elevator-view {
+            background: rgba(15, 23, 42, 0.8);
+            border: 2px solid #1e40af;
+            border-radius: 8px;
+            height: 400px;
+            margin-bottom: 15px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .floor-marks {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 10px;
+        }
+
+        .floor-mark {
+            display: flex;
+            align-items: center;
+            height: 30px;
+            border-top: 1px solid rgba(59, 130, 246, 0.3);
+            color: #64748b;
+            font-size: 0.9em;
+        }
+
+        .floor-mark:last-child {
+            border-bottom: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        .elevator-shaft {
+            position: absolute;
+            width: 60px;
+            height: 350px;
+            left: 50px;
+            top: 25px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 2px solid #1e40af;
+            border-radius: 4px;
+        }
+
+        .elevator-box {
+            position: absolute;
+            width: 50px;
+            height: 40px;
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+            border: 2px solid #d97706;
+            border-radius: 4px;
+            left: 55px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: #1f2937;
+            box-shadow: 0 0 15px rgba(251, 191, 36, 0.6);
+            transition: top 0.1s linear;
+            z-index: 10;
+        }
+
+        .target-line {
+            position: absolute;
+            width: 3px;
+            height: 60px;
+            background: #06b6d4;
+            left: 125px;
+            opacity: 0.6;
+            transition: top 0.2s ease;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .stat-box {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid #1e40af;
+            border-radius: 6px;
+            padding: 12px;
+        }
+
+        .stat-label {
+            color: #93c5fd;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #fbbf24;
+        }
+
+        .passengers-display {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid #1e40af;
+            border-radius: 6px;
+            padding: 12px;
+        }
+
+        .passengers-label {
+            color: #93c5fd;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+
+        .passengers-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .passenger-dot {
+            width: 28px;
+            height: 28px;
+            background: linear-gradient(135deg, #10b981, #059669);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8em;
+            font-weight: bold;
+            box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+        }
+
+        .empty-passengers {
+            color: #64748b;
+            font-style: italic;
+        }
+
+        .stats-panel {
+            background: rgba(30, 58, 138, 0.7);
+            border: 2px solid #3b82f6;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+
+        .stats-panel h3 {
+            font-size: 1.3em;
+            margin-bottom: 20px;
+            color: #fbbf24;
+        }
+
+        .stats-overview {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .overview-card {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid #1e40af;
+            border-radius: 6px;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .overview-label {
+            color: #93c5fd;
+            font-size: 0.9em;
+            margin-bottom: 8px;
+        }
+
+        .overview-value {
+            font-size: 2.2em;
+            font-weight: bold;
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .connection-status {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-weight: bold;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .status-connected {
+            background: #10b981;
+            color: white;
+        }
+
+        .status-disconnected {
+            background: #ef4444;
+            color: white;
+        }
+
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            vertical-align: middle;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛗 电梯调度可视化系统</h1>
+            <p class="subtitle">Bus 算法实时模拟显示</p>
+        </header>
+
+        <div class="control-panel">
+            <button id="playBtn" class="btn-play" onclick="togglePlay()">▶ 开始</button>
+            <button id="resetBtn" class="btn-reset" onclick="resetData()">⟲ 重置</button>
+            
+            <div class="control-group">
+                <label for="speedSlider">更新速度:</label>
+                <input type="range" id="speedSlider" min="500" max="3000" step="100" value="1000" 
+                       onchange="updateSpeed(this.value)">
+                <span id="speedValue">1000ms</span>
+            </div>
+
+            <div class="status-info">
+                Tick: <span id="tickCounter">0</span>
+            </div>
+        </div>
+
+        <div class="elevator-container" id="elevatorContainer">
+            <!-- 电梯卡片会动态生成 -->
+        </div>
+
+        <div class="stats-panel">
+            <h3>📊 系统统计</h3>
+            <div class="stats-overview">
+                <div class="overview-card">
+                    <div class="overview-label">总乘客数</div>
+                    <div class="overview-value" id="totalPassengers">0</div>
+                </div>
+                <div class="overview-card">
+                    <div class="overview-label">在梯乘客</div>
+                    <div class="overview-value" id="inElevatorPassengers">0</div>
+                </div>
+                <div class="overview-card">
+                    <div class="overview-label">电梯数量</div>
+                    <div class="overview-value" id="elevatorCount">0</div>
+                </div>
+                <div class="overview-card">
+                    <div class="overview-label">最大楼层</div>
+                    <div class="overview-value" id="maxFloor">5</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="connectionStatus" class="connection-status status-disconnected">
+        <span class="status-dot"></span>
+        <span id="statusText">正在连接...</span>
+    </div>
+
+    <script>
+        let isPlaying = false;
+        let updateInterval = 1000;
+        let currentState = null;
+        let maxFloorValue = 5;
+
+        // 初始化
+        function init() {
+            checkConnection();
+            setInterval(fetchData, updateInterval);
+        }
+
+        // 检查后端连接
+        function checkConnection() {
+            fetch('http://127.0.0.1:5000/health')
+                .then(res => res.json())
+                .then(() => {
+                    updateConnectionStatus(true);
+                })
+                .catch(() => {
+                    updateConnectionStatus(false);
+                });
+        }
+
+        // 更新连接状态
+        function updateConnectionStatus(connected) {
+            const status = document.getElementById('connectionStatus');
+            const text = document.getElementById('statusText');
+            
+            if (connected) {
+                status.className = 'connection-status status-connected';
+                text.textContent = '✓ 已连接';
+            } else {
+                status.className = 'connection-status status-disconnected';
+                text.textContent = '✗ 未连接';
+            }
+        }
+
+        // 获取数据
+        function fetchData() {
+            if (!isPlaying) return;
+
+            fetch('http://127.0.0.1:5000/api/state')
+                .then(res => res.json())
+                .then(data => {
+                    currentState = data;
+                    maxFloorValue = data.max_floor || 5;
+                    updateUI(data);
+                    updateConnectionStatus(true);
+                })
+                .catch(err => {
+                    console.error('获取数据失败:', err);
+                    updateConnectionStatus(false);
+                });
+        }
+
+        // 更新UI
+        function updateUI(state) {
+            // 更新 Tick 计数器
+            document.getElementById('tickCounter').textContent = state.tick;
+
+            // 更新或创建电梯卡片
+            const container = document.getElementById('elevatorContainer');
+            
+            state.elevators.forEach((elevator, index) => {
+                let card = document.getElementById(`elevator-${elevator.id}`);
+                
+                if (!card) {
+                    card = createElevatorCard(elevator);
+                    container.appendChild(card);
+                }
+                
+                updateElevatorCard(card, elevator);
+            });
+
+            // 更新统计信息
+            const totalPassengers = state.passengers.length;
+            const inElevatorPassengers = state.elevators.reduce((sum, e) => sum + e.passengers, 0);
+            
+            document.getElementById('totalPassengers').textContent = totalPassengers;
+            document.getElementById('inElevatorPassengers').textContent = inElevatorPassengers;
+            document.getElementById('elevatorCount').textContent = state.elevators.length;
+            document.getElementById('maxFloor').textContent = state.max_floor;
+        }
+
+        // 创建电梯卡片
+        function createElevatorCard(elevator) {
+            const card = document.createElement('div');
+            card.id = `elevator-${elevator.id}`;
+            card.className = 'elevator-card';
+            card.innerHTML = `
+                <div class="elevator-title">电梯 E${elevator.id}</div>
+                
+                <div class="elevator-view">
+                    <div class="floor-marks">
+                        ${generateFloorMarks()}
+                    </div>
+                    <div class="elevator-shaft"></div>
+                    <div class="elevator-box" id="box-${elevator.id}">E${elevator.id}</div>
+                    <div class="target-line" id="target-${elevator.id}"></div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-label">当前楼层</div>
+                        <div class="stat-value" id="floor-${elevator.id}">0.0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">目标楼层</div>
+                        <div class="stat-value" id="target-${elevator.id}" style="color: #06b6d4">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">运动状态</div>
+                        <div class="stat-value" id="direction-${elevator.id}">停止</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">乘客数</div>
+                        <div class="stat-value" id="passengers-${elevator.id}">0/8</div>
+                    </div>
+                </div>
+
+                <div class="passengers-display">
+                    <div class="passengers-label">🚶 车内乘客</div>
+                    <div class="passengers-list" id="passenger-list-${elevator.id}">
+                        <span class="empty-passengers">暂无乘客</span>
+                    </div>
+                </div>
+            `;
+            return card;
+        }
+
+        // 生成楼层标记
+        function generateFloorMarks() {
+            let html = '';
+            for (let i = maxFloorValue; i >= 0; i--) {
+                html += `<div class="floor-mark">F${i}</div>`;
+            }
+            return html;
+        }
+
+        // 更新电梯卡片
+        function updateElevatorCard(card, elevator) {
+            const boxHeight = 350; // 电梯轴的高度
+            const position = (1 - (elevator.current_floor / maxFloorValue)) * boxHeight;
+            
+            // 更新电梯位置
+            const elevatorBox = card.querySelector(`#box-${elevator.id}`);
+            if (elevatorBox) {
+                elevatorBox.style.top = position + 'px';
+            }
+
+            // 更新目标线位置
+            const targetLine = card.querySelector(`#target-${elevator.id}`);
+            if (targetLine) {
+                const targetPos = (1 - (elevator.target_floor / maxFloorValue)) * boxHeight;
+                targetLine.style.top = (targetPos + 15) + 'px';
+            }
+
+            // 更新当前楼层
+            const floorDisplay = card.querySelector(`#floor-${elevator.id}`);
+            if (floorDisplay) {
+                floorDisplay.textContent = elevator.current_floor.toFixed(1);
+            }
+
+            // 更新目标楼层
+            const targetDisplay = card.querySelector(`#target-${elevator.id}`);
+            if (targetDisplay && targetDisplay.id !== `target-${elevator.id}`) {
+                targetDisplay.textContent = elevator.target_floor;
+            }
+
+            // 更新方向
+            const directionDisplay = card.querySelector(`#direction-${elevator.id}`);
+            if (directionDisplay) {
+                let dirText = '停止';
+                if (elevator.direction === 'up') dirText = '📈 上升';
+                else if (elevator.direction === 'down') dirText = '📉 下降';
+                directionDisplay.textContent = dirText;
+            }
+
+            // 更新乘客数
+            const passengerCount = card.querySelector(`#passengers-${elevator.id}`);
+            if (passengerCount) {
+                passengerCount.textContent = `${elevator.passengers}/${elevator.capacity}`;
+            }
+
+            // 更新乘客列表
+            const passengerList = card.querySelector(`#passenger-list-${elevator.id}`);
+            if (passengerList) {
+                if (elevator.passengers > 0) {
+                    passengerList.innerHTML = '';
+                    for (let i = 0; i < elevator.passengers; i++) {
+                        const dot = document.createElement('div');
+                        dot.className = 'passenger-dot';
+                        dot.textContent = i + 1;
+                        passengerList.appendChild(dot);
+                    }
+                } else {
+                    passengerList.innerHTML = '<span class="empty-passengers">暂无乘客</span>';
+                }
+            }
+        }
+
+        // 切换播放/暂停
+        function togglePlay() {
+            isPlaying = !isPlaying;
+            const btn = document.getElementById('playBtn');
+            
+            if (isPlaying) {
+                btn.textContent = '⏸ 暂停';
+                btn.className = 'btn-pause';
+                checkConnection();
+                fetchData(); // 立即获取一次数据
+            } else {
+                btn.textContent = '▶ 开始';
+                btn.className = 'btn-play';
+            }
+        }
+
+        // 重置数据
+        function resetData() {
+            fetch('http://127.0.0.1:5000/api/reset', { method: 'POST' })
+                .then(res => res.json())
+                .then(() => {
+                    document.getElementById('tickCounter').textContent = '0';
+                    document.getElementById('elevatorContainer').innerHTML = '';
+                    currentState = null;
+                })
+                .catch(err => console.error('重置失败:', err));
+        }
+
+        // 更新速度
+        function updateSpeed(value) {
+            updateInterval = parseInt(value);
+            document.getElementById('speedValue').textContent = value + 'ms';
+        }
+
+        // 页面加载时初始化
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
