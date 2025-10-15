@@ -27,6 +27,8 @@ class ElevatorPlanner(ElevatorController):
         self.backend_url = "http://127.0.0.1:5000"  # 后端服务地址
         self.current_tick = 0  # 当前时间刻度
         self.events_log = []  # 事件日志
+        self.passenger_wait_time: Dict[int, int] = {}  # 乘客等待时间记录
+        self.last_elevator_target: Dict[int, int] = {}  # 电梯上次目标楼层记录，防止重复命令
         
         # 尝试连接后端
         self.backend_available = self._check_backend()
@@ -153,6 +155,7 @@ class ElevatorPlanner(ElevatorController):
         """乘客呼叫时的回调"""
         # 记录乘客信息
         self.all_passengers.append(passenger)
+        self.passenger_wait_time[passenger.id] = self.current_tick  # 记录乘客开始等待时间
         
         if self.debug:
             print(f"👤 乘客 {passenger.id} 在 F{floor.floor} 请求 {passenger.origin} -> {passenger.destination} ({direction})")
@@ -194,9 +197,13 @@ class ElevatorPlanner(ElevatorController):
     def on_passenger_board(self, elevator: ProxyElevator, passenger: ProxyPassenger) -> None:
         """乘客进入电梯时的回调"""
         if self.debug:
-            print(f"✅ 乘客 {passenger.id} 进入电梯 E{elevator.id}")
+            # 计算乘客等待时间
+            wait_time = self.current_tick - self.passenger_wait_time.get(passenger.id, self.current_tick)
+            print(f"✅ 乘客 {passenger.id} 进入电梯 E{elevator.id} (等待时间: {wait_time} 刻度)")
         
-        # 不需要特别处理，因为电梯内部的目标楼层由系统自动处理
+        # 清除乘客等待记录
+        if passenger.id in self.passenger_wait_time:
+            del self.passenger_wait_time[passenger.id]
 
     def on_passenger_alight(self, elevator: ProxyElevator, passenger: ProxyPassenger, floor: ProxyFloor) -> None:
         """乘客离开电梯时的回调"""
@@ -214,7 +221,7 @@ class ElevatorPlanner(ElevatorController):
     def _find_best_elevator_for_passenger(self, passenger: ProxyPassenger, floor: ProxyFloor, direction: str) -> Optional[ProxyElevator]:
         """
         为乘客找到最合适的电梯
-        考虑因素：电梯当前位置、运行方向、载客量、已有请求数量
+        优化版本：考虑更多因素，包括电梯当前运行方向、乘客目标楼层、电梯负载等
         """
         best_elevator = None
         best_score = float('inf')
@@ -230,14 +237,32 @@ class ElevatorPlanner(ElevatorController):
             # 计算得分，距离越近、载客量越少得分越低（越好）
             # 优先考虑同方向的电梯
             direction_factor = 1.0
-            if elevator.target_floor_direction.value == direction or elevator.is_idle:
-                direction_factor = 0.5
+            is_same_direction = elevator.target_floor_direction.value == direction
+            is_idle = elevator.is_idle
+            is_approaching = False
+            
+            # 检查电梯是否正在接近乘客所在楼层
+            if elevator.target_floor_direction.value == "up" and elevator.current_floor < floor.floor:
+                is_approaching = True
+            elif elevator.target_floor_direction.value == "down" and elevator.current_floor > floor.floor:
+                is_approaching = True
+            
+            # 方向因子优化
+            if is_same_direction and is_approaching:
+                direction_factor = 0.3  # 同方向且正在接近，最佳情况
+            elif is_same_direction or is_idle:
+                direction_factor = 0.6  # 同方向或空闲
+            
+            # 优先处理高层下行请求，减少高层乘客等待时间
+            priority_factor = 1.0
+            if direction == "down" and floor.floor > self.max_floor * 0.7:
+                priority_factor = 0.7  # 高层下行请求优先级提升
             
             # 当前电梯的请求数量
             request_count = len(self.elevator_up_requests[elevator.id]) + len(self.elevator_down_requests[elevator.id])
             
             # 综合得分
-            score = distance * direction_factor + elevator.load_factor * 10 + request_count * 0.5
+            score = distance * direction_factor * priority_factor + elevator.load_factor * 15 + request_count * 0.8
             
             # 更新最佳电梯
             if score < best_score:
@@ -247,7 +272,7 @@ class ElevatorPlanner(ElevatorController):
         return best_elevator
     
     def _update_elevator_target(self, elevator: ProxyElevator) -> None:
-        """根据当前请求更新电梯的目标楼层"""
+        """根据当前请求更新电梯的目标楼层 - 优化版本"""
         current_floor = elevator.current_floor
         direction = self.elevator_directions[elevator.id]
         
@@ -258,8 +283,9 @@ class ElevatorPlanner(ElevatorController):
         if hasattr(elevator, 'pressed_floors'):
             target_floors.update(elevator.pressed_floors)
         
-        # 添加外部请求楼层
+        # 添加外部请求楼层（LOOK算法：先处理当前方向所有请求）
         if direction == "up":
+            # 先添加当前方向的所有请求
             target_floors.update(self.elevator_up_requests[elevator.id])
         else:
             target_floors.update(self.elevator_down_requests[elevator.id])
@@ -284,23 +310,28 @@ class ElevatorPlanner(ElevatorController):
                 # 在当前楼层之上的最近目标楼层
                 above_targets = [f for f in target_floors if f > current_floor]
                 if above_targets:
-                    next_floor = min(above_targets)
+                    # LOOK算法：选择最远的上方目标，而不是最近的
+                    next_floor = max(above_targets)
                 else:
-                    # 如果当前方向没有更高的目标，改变方向
-                    next_floor = max(target_floors)
+                    # 如果当前方向没有更高的目标，改变方向并选择最低目标
+                    next_floor = min(target_floors)
                     self.elevator_directions[elevator.id] = "down"
             else:
                 # 在当前楼层之下的最近目标楼层
                 below_targets = [f for f in target_floors if f < current_floor]
                 if below_targets:
-                    next_floor = max(below_targets)
+                    # LOOK算法：选择最远的下方目标，而不是最近的
+                    next_floor = min(below_targets)
                 else:
-                    # 如果当前方向没有更低的目标，改变方向
-                    next_floor = min(target_floors)
+                    # 如果当前方向没有更低的目标，改变方向并选择最高目标
+                    next_floor = max(target_floors)
                     self.elevator_directions[elevator.id] = "up"
             
-            # 设置电梯目标
-            elevator.go_to_floor(next_floor)
+            # 检查是否需要发送命令（避免重复命令）
+            if elevator.id not in self.last_elevator_target or self.last_elevator_target[elevator.id] != next_floor:
+                # 设置电梯目标
+                elevator.go_to_floor(next_floor)
+                self.last_elevator_target[elevator.id] = next_floor
     
     def _ensure_elevator_has_target(self, elevator: ProxyElevator) -> None:
         """确保电梯始终有目标楼层"""
@@ -310,9 +341,16 @@ class ElevatorPlanner(ElevatorController):
 
 
 if __name__ == "__main__":
-    print("\n" + "=" * 60)
-    print("🚀 启动基于LOOK算法的电梯调度系统")
-    print("=" * 60)
-    # 创建电梯调度器实例并启动
-    planner = ElevatorPlanner(debug=True)
-    planner.start()
+    try:
+        print("\n" + "=" * 60)
+        print("🚀 启动基于LOOK算法的电梯调度系统")
+        print("=" * 60)
+        # 创建电梯调度器实例并启动
+        planner = ElevatorPlanner(debug=True)
+        planner.start()
+    except KeyboardInterrupt:
+        print("\n🛑 电梯调度系统已被用户中断")
+    except Exception as e:
+        print(f"\n❌ 电梯调度系统启动失败: {e}")
+        import traceback
+        traceback.print_exc()

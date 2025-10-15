@@ -520,7 +520,7 @@
                     </div>
                     <div class="elevator-shaft"></div>
                     <div class="elevator-box" id="box-${elevator.id}">E${elevator.id}</div>
-                    <div class="target-line" id="target-${elevator.id}"></div>
+                    <div class="target-line" id="target-line-${elevator.id}"></div>
                 </div>
 
                 <div class="stats-grid">
@@ -530,7 +530,7 @@
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">目标楼层</div>
-                        <div class="stat-value" id="target-${elevator.id}" style="color: #06b6d4">0</div>
+                        <div class="stat-value" id="target-text-${elevator.id}" style="color: #06b6d4">0</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">运动状态</div>
@@ -561,6 +561,28 @@
             return html;
         }
 
+        // 数字平滑动画函数
+        function animateValue(element, start, end, duration) {
+            // 记录开始时间和起始值
+            const startTime = performance.now();
+            
+            function updateValue(currentTime) {
+                const elapsedTime = currentTime - startTime;
+                const progress = Math.min(elapsedTime / duration, 1);
+                // 使用缓动函数使动画更自然
+                const easeOutProgress = 1 - Math.pow(1 - progress, 3);
+                const currentValue = Math.floor(start + (end - start) * easeOutProgress);
+                
+                element.textContent = `${currentValue}/${element.dataset.capacity}`;
+                
+                if (progress < 1) {
+                    requestAnimationFrame(updateValue);
+                }
+            }
+            
+            requestAnimationFrame(updateValue);
+        }
+
         // 更新电梯卡片
         function updateElevatorCard(card, elevator) {
             const boxHeight = 350; // 电梯轴的高度
@@ -573,7 +595,7 @@
             }
 
             // 更新目标线位置
-            const targetLine = card.querySelector(`#target-${elevator.id}`);
+            const targetLine = card.querySelector(`#target-line-${elevator.id}`);
             if (targetLine) {
                 const targetPos = (1 - (elevator.target_floor / maxFloorValue)) * boxHeight;
                 targetLine.style.top = (targetPos + 15) + 'px';
@@ -586,8 +608,8 @@
             }
 
             // 更新目标楼层
-            const targetDisplay = card.querySelector(`#target-${elevator.id}`);
-            if (targetDisplay && targetDisplay.id !== `target-${elevator.id}`) {
+            const targetDisplay = card.querySelector(`#target-text-${elevator.id}`);
+            if (targetDisplay) {
                 targetDisplay.textContent = elevator.target_floor;
             }
 
@@ -600,10 +622,24 @@
                 directionDisplay.textContent = dirText;
             }
 
-            // 更新乘客数
+            // 更新乘客数 - 使用平滑动画
             const passengerCount = card.querySelector(`#passengers-${elevator.id}`);
             if (passengerCount) {
-                passengerCount.textContent = `${elevator.passengers}/${elevator.capacity}`;
+                // 存储容量信息
+                passengerCount.dataset.capacity = elevator.capacity;
+                
+                // 获取当前显示的乘客数
+                const currentText = passengerCount.textContent;
+                const currentValue = parseInt(currentText.split('/')[0]) || 0;
+                
+                // 如果数值有变化，启动动画
+                if (currentValue !== elevator.passengers) {
+                    // 使用400毫秒的动画持续时间
+                    animateValue(passengerCount, currentValue, elevator.passengers, 400);
+                } else {
+                    // 数值无变化，直接更新
+                    passengerCount.textContent = `${elevator.passengers}/${elevator.capacity}`;
+                }
             }
 
             // 更新乘客列表
