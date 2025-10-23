@@ -8,6 +8,11 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from threading import Lock
 from datetime import datetime
+import json
+import os
+
+# 结果文件路径（与脚本同目录）
+RESULT_FILE = os.path.join(os.path.dirname(__file__), "result.json")
 
 app = Flask(__name__)
 CORS(app)
@@ -23,6 +28,18 @@ elevator_state = {
 }
 
 state_lock = Lock()
+
+def _write_result_file(state: dict) -> None:
+    """将当前状态以 JSON 原子性写入 result.json"""
+    try:
+        tmp_path = RESULT_FILE + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        # 原子替换
+        os.replace(tmp_path, RESULT_FILE)
+    except Exception:
+        # 写入失败不影响主流程
+        pass
 
 @app.route('/api/state', methods=['GET'])
 def get_state():
@@ -46,6 +63,8 @@ def update_state():
             "max_floor": data.get("max_floor", 5),
             "timestamp": datetime.now().isoformat()
         }
+        # 写入结果文件
+        _write_result_file(elevator_state)
     
     return jsonify({"status": "ok", "message": "State updated"})
 
@@ -63,6 +82,8 @@ def reset_state():
             "max_floor": 5,
             "timestamp": datetime.now().isoformat()
         }
+        # 写入结果文件（重置后的空状态）
+        _write_result_file(elevator_state)
     
     return jsonify({"status": "ok", "message": "State reset"})
 
@@ -74,13 +95,11 @@ def health():
 
 if __name__ == '__main__':
     print("=" * 60)
-    print("🚀 电梯可视化后端启动（已禁用自动启动）")
+    print("🚀 电梯可视化后端启动")
     print("=" * 60)
     print("📡 后端服务地址: http://127.0.0.1:5000")
     print("📊 获取状态: GET http://127.0.0.1:5000/api/state")
     print("📤 更新状态: POST http://127.0.0.1:5000/api/update")
     print("🔄 重置状态: POST http://127.0.0.1:5000/api/reset")
     print("=" * 60)
-    # app.run(debug=False, port=5000, host='127.0.0.1')
-    # 注意：已移除自动启动行（app.run），直接运行该脚本不会启动服务器。
-    # 如需启动服务，请手动调用 app.run(...) 或使用 `flask run` / 由外部进程管理器启动。
+    app.run(debug=False, port=5000, host='127.0.0.1')
