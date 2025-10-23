@@ -48,9 +48,7 @@ class OptimizedScanController(ElevatorController):
             return False
 
     def _send_state_to_backend(self, elevators: List[ProxyElevator]) -> None:
-        """向可视化后端发送当前状态（容错，不影响主逻辑）"""
-        if not self.backend_available:
-            return
+        """向可视化后端发送当前状态（容错：每次尝试并根据结果更新 backend_available）"""
         try:
             import requests
             elevator_data = []
@@ -72,10 +70,12 @@ class OptimizedScanController(ElevatorController):
                 "passengers": passengers_data,
                 "max_floor": self.max_floor
             }
-            requests.post(f"{self.backend_url}/api/update", json=payload, timeout=1)
+            resp = requests.post(f"{self.backend_url}/api/update", json=payload, timeout=1)
+            # 根据响应更新可用性标志，便于后续快速判断
+            self.backend_available = (resp.status_code == 200)
         except Exception:
-            # 上报失败不影响主流程
-            pass
+            # 上报失败：标记为不可用，但不抛异常（保持主流程运行）
+            self.backend_available = False
 
     def on_init(self, elevators: List[ProxyElevator], floors: List[ProxyFloor]) -> None:
         """初始化优化的SCAN电梯算法"""
