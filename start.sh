@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
+# 智能电梯调度系统 - Linux启动脚本（带GUI）
 set -e
-"""
-智能电梯调度系统 - 启动脚本（带 GUI）
-"""
 
-# 自动寻找 python 与 pip（优先 python3 / pip3）
-python_cmd="$(command -v python3 || command -v python)"
+echo "===================================="
+echo "智能电梯监控系统 - GUI模式"
+echo "===================================="
+echo
+
+# 查找Python命令
+python_cmd="$(command -v python3 || command -v python || true)"
 if [ -z "$python_cmd" ]; then
-  echo "未找到 python 或 python3，请先安装 Python。"
+  echo "[错误] 未找到python或python3，请先安装Python 3.8+"
   exit 1
 fi
 
-pip_cmd="$(command -v pip3 || command -v pip || true)"
-if [ -z "$pip_cmd" ]; then
-  echo "未找到 pip，使用 python -m pip 安装依赖..."
-  "$python_cmd" -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ elevator-py PyQt6
-else
-  "$pip_cmd" install -i https://pypi.tuna.tsinghua.edu.cn/simple/ elevator-py PyQt6
-fi
+echo "[1/3] 检查Python版本..."
+$python_cmd --version
 
-# 启动 GUI
-"$python_cmd" ./gui.py
+echo "[2/3] 安装依赖包..."
+$python_cmd -m pip install --quiet elevator-py PyQt6 2>/dev/null || \
+  $python_cmd -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ elevator-py PyQt6
+
+echo "[3/3] 启动GUI..."
+export ELEVATOR_CLIENT_TYPE=gui
+$python_cmd gui_only.py

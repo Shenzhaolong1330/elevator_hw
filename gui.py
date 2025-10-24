@@ -1,832 +1,899 @@
 #!/usr/bin/env python3
 """
-集成式电梯调度可视化系统 - PyQt6版本
-简化版本：只保留终端输出
+现代化电梯监控系统 - 全新UI设计
+采用扁平化设计风格，卡片式布局，动画效果
 """
 import sys
 import threading
-import time
 from typing import Dict, List, Set
 from collections import defaultdict
-import re
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QLabel, QPushButton, QTextEdit, 
-                            QGroupBox, QGridLayout, QScrollArea, QFrame)
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QFont, QColor, QPalette, QPainter
+                            QGroupBox, QGridLayout, QFrame, QSplitter)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve, QRect
+from PyQt6.QtGui import QFont, QColor, QPalette, QPainter, QLinearGradient, QPen, QBrush
 
-# 导入电梯调度算法
 from elevator_saga.client.base_controller import ElevatorController
 from elevator_saga.client.proxy_models import ProxyElevator, ProxyFloor, ProxyPassenger
 from elevator_saga.core.models import Direction, SimulationEvent
 
 
-class ElevatorSignal(QObject):
-    """用于线程间通信的信号"""
-    update_signal = pyqtSignal(str)
-    elevator_update = pyqtSignal(dict)
-    request_update = pyqtSignal(dict)
+class SignalBridge(QObject):
+    """信号桥接器"""
+    log_message = pyqtSignal(str, str)  # message, level
+    unit_status = pyqtSignal(dict)
+    call_status = pyqtSignal(dict)
 
 
-class ElevatorWidget(QWidget):
-    """单个电梯的可视化组件"""
+class ElevatorCard(QWidget):
+    """电梯卡片组件 - 现代扁平化设计"""
     
-    def __init__(self, elevator_id, max_floors=10):
+    def __init__(self, unit_id, max_levels=10):
         super().__init__()
-        self.elevator_id = elevator_id
-        self.max_floors = max_floors
-        self.current_floor = 0
-        self.direction = "up"
-        self.state = "resting"
-        self.passenger_count = 0
-        self.target_floors = []
+        self.unit_id = unit_id
+        self.max_levels = max_levels
+        self.current_level = 0
+        self.heading = "none"
+        self.status = "idle"
+        self.load_count = 0
+        self.targets = []
+        self.animation_progress = 0
         self.setup_ui()
         
+        # 动画定时器
+        self.anim_timer = QTimer()
+        self.anim_timer.timeout.connect(self.update_animation)
+        self.anim_timer.start(50)
+        
     def setup_ui(self):
-        """设置电梯UI"""
-        self.setFixedSize(120, 400)
-        self.setStyleSheet("background-color: #f0f0f0; border: 2px solid #ccc; border-radius: 8px;")
+        """设置UI"""
+        self.setFixedSize(180, 450)
+        self.setStyleSheet("""
+            QWidget {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #ffffff, stop:1 #f5f5f5);
+                border-radius: 12px;
+                border: 1px solid #e0e0e0;
+            }
+        """)
         
     def paintEvent(self, event):
-        """绘制电梯状态"""
+        """绘制电梯卡片"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # 绘制电梯背景
-        painter.fillRect(self.rect(), QColor(240, 240, 240))
+        # 绘制背景
+        self._draw_background(painter)
         
-        # 绘制楼层标记
-        self.draw_floors(painter)
+        # 绘制标题
+        self._draw_header(painter)
+        
+        # 绘制电梯井
+        self._draw_shaft(painter)
         
         # 绘制电梯轿厢
-        self.draw_elevator_car(painter)
+        self._draw_cabin(painter)
         
-        # 绘制状态信息
-        self.draw_status_info(painter)
+        # 绘制信息面板
+        self._draw_info_panel(painter)
         
-    def draw_floors(self, painter):
-        """绘制楼层标记"""
-        floor_height = self.height() / self.max_floors
-        painter.setPen(QColor(200, 200, 200))
+    def _draw_background(self, painter):
+        """绘制背景"""
+        gradient = QLinearGradient(0, 0, 0, self.height())
+        gradient.setColorAt(0, QColor(255, 255, 255))
+        gradient.setColorAt(1, QColor(245, 245, 245))
+        painter.fillRect(self.rect(), gradient)
         
-        for i in range(self.max_floors + 1):
-            y = int(self.height() - (i * floor_height) - 1)
-            painter.drawLine(10, y, self.width() - 10, y)
+    def _draw_header(self, painter):
+        """绘制标题区"""
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(66, 133, 244))
+        painter.drawRoundedRect(0, 0, self.width(), 50, 12, 12)
+        
+        # 电梯编号
+        painter.setPen(QColor(255, 255, 255))
+        painter.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        painter.drawText(20, 30, f"电梯 {self.unit_id + 1}")
+        
+        # 状态指示灯
+        status_colors = {
+            "idle": QColor(76, 175, 80),
+            "moving": QColor(33, 150, 243),
+            "loading": QColor(255, 152, 0)
+        }
+        painter.setBrush(status_colors.get(self.status, QColor(158, 158, 158)))
+        painter.drawEllipse(self.width() - 35, 15, 20, 20)
+        
+    def _draw_shaft(self, painter):
+        """绘制电梯井道"""
+        shaft_x = 40
+        shaft_y = 70
+        shaft_width = 100
+        shaft_height = 300
+        
+        # 井道背景
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(240, 240, 240))
+        painter.drawRoundedRect(shaft_x, shaft_y, shaft_width, shaft_height, 8, 8)
+        
+        # 绘制楼层线
+        level_height = shaft_height / self.max_levels
+        painter.setPen(QPen(QColor(220, 220, 220), 1))
+        
+        for i in range(self.max_levels + 1):
+            y = int(shaft_y + shaft_height - (i * level_height))
+            painter.drawLine(shaft_x, y, shaft_x + shaft_width, y)
             
-            # 楼层数字
-            painter.setPen(QColor(100, 100, 100))
-            painter.drawText(5, y - 2, f"F{i}")
-            painter.setPen(QColor(200, 200, 200))
-    
-    def draw_elevator_car(self, painter):
+            # 楼层标签
+            painter.setPen(QColor(120, 120, 120))
+            painter.setFont(QFont("Arial", 8))
+            painter.drawText(shaft_x - 25, y + 4, f"F{i}")
+            
+            # 目标楼层标记
+            if i in self.targets:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(255, 193, 7, 150))
+                painter.drawEllipse(shaft_x + shaft_width + 5, y - 4, 8, 8)
+        
+    def _draw_cabin(self, painter):
         """绘制电梯轿厢"""
-        floor_height = self.height() / self.max_floors
-        car_y = int(self.height() - (self.current_floor * floor_height) - floor_height)
+        shaft_x = 40
+        shaft_y = 70
+        shaft_height = 300
         
-        # 根据状态选择颜色
-        if self.state == "resting":
-            color = QColor(100, 200, 100)  # 绿色 - 休息
-        elif self.state == "scanning":
-            color = QColor(70, 130, 180)   # 蓝色 - 工作中
-        else:
-            color = QColor(200, 100, 100)  # 红色 - 其他状态
-            
-        # 绘制轿厢
-        car_height = int(floor_height - 10)
-        painter.fillRect(30, car_y + 5, 60, car_height, color)
+        level_height = shaft_height / self.max_levels
+        cabin_y = int(shaft_y + shaft_height - (self.current_level * level_height) - level_height + 5)
+        cabin_height = int(level_height - 10)
+        
+        # 轿厢阴影
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 30))
+        painter.drawRoundedRect(45, cabin_y + 3, 90, cabin_height, 6, 6)
+        
+        # 轿厢主体 - 根据状态变色
+        cabin_colors = {
+            "idle": QColor(76, 175, 80),
+            "moving": QColor(33, 150, 243),
+            "loading": QColor(255, 152, 0)
+        }
+        gradient = QLinearGradient(45, cabin_y, 45, cabin_y + cabin_height)
+        base_color = cabin_colors.get(self.status, QColor(158, 158, 158))
+        gradient.setColorAt(0, base_color.lighter(120))
+        gradient.setColorAt(1, base_color)
+        painter.setBrush(gradient)
+        painter.drawRoundedRect(45, cabin_y, 90, cabin_height, 6, 6)
         
         # 轿厢边框
-        painter.setPen(QColor(50, 50, 50))
-        painter.drawRect(30, car_y + 5, 60, car_height)
+        painter.setPen(QPen(base_color.darker(120), 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(45, cabin_y, 90, cabin_height, 6, 6)
         
-        # 电梯ID和乘客数
+        # 电梯编号
         painter.setPen(QColor(255, 255, 255))
-        painter.drawText(35, car_y + 25, f"E{self.elevator_id}")
-        painter.drawText(35, car_y + 45, f"{self.passenger_count}人")
+        painter.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        text_y = cabin_y + cabin_height // 2 - 8
+        painter.drawText(50, text_y, 80, 20, Qt.AlignmentFlag.AlignCenter, f"E{self.unit_id + 1}")
+        
+        # 乘客数量
+        painter.setFont(QFont("Arial", 9))
+        painter.drawText(50, text_y + 18, 80, 20, Qt.AlignmentFlag.AlignCenter, f"👥 {self.load_count}")
         
         # 方向指示器
-        if self.direction == "up":
-            painter.drawText(80, car_y + 25, "↑")
-        else:
-            painter.drawText(80, car_y + 25, "↓")
+        if self.heading == "up":
+            self._draw_arrow(painter, 90, cabin_y - 15, True)
+        elif self.heading == "down":
+            self._draw_arrow(painter, 90, cabin_y + cabin_height + 5, False)
     
-    def draw_status_info(self, painter):
-        """绘制状态信息"""
-        painter.setPen(QColor(0, 0, 0))
+    def _draw_arrow(self, painter, x, y, is_up):
+        """绘制方向箭头"""
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(244, 67, 54) if is_up else QColor(33, 150, 243))
+        
+        if is_up:
+            points = [
+                (x, y),
+                (x - 6, y + 8),
+                (x + 6, y + 8)
+            ]
+        else:
+            points = [
+                (x, y + 8),
+                (x - 6, y),
+                (x + 6, y)
+            ]
+        
+        from PyQt6.QtCore import QPointF
+        painter.drawPolygon([QPointF(px, py) for px, py in points])
+    
+    def _draw_info_panel(self, painter):
+        """绘制信息面板"""
+        panel_y = 390
         
         # 状态文本
-        status_text = f"状态: {self.state}"
-        painter.drawText(10, 15, status_text)
+        status_text = {
+            "idle": "空闲待机",
+            "moving": "运行中",
+            "loading": "装载中"
+        }
+        
+        painter.setPen(QColor(80, 80, 80))
+        painter.setFont(QFont("Arial", 9))
+        painter.drawText(20, panel_y, f"状态: {status_text.get(self.status, '未知')}")
+        
+        painter.drawText(20, panel_y + 20, f"楼层: F{self.current_level}")
         
         # 目标楼层
-        targets_text = f"目标: {self.target_floors}" if self.target_floors else "目标: 无"
-        painter.drawText(10, 30, targets_text)
+        if self.targets:
+            target_str = ", ".join([f"F{t}" for t in sorted(self.targets)[:3]])
+            if len(self.targets) > 3:
+                target_str += "..."
+            painter.drawText(20, panel_y + 40, f"目标: {target_str}")
+        else:
+            painter.drawText(20, panel_y + 40, "目标: 无")
+    
+    def update_animation(self):
+        """更新动画"""
+        self.animation_progress = (self.animation_progress + 1) % 100
+        if self.status == "moving":
+            self.update()
     
     def update_state(self, state_data):
-        """更新电梯状态"""
-        self.current_floor = state_data.get('current_floor', 0)
-        self.direction = state_data.get('direction', 'up')
-        self.state = state_data.get('state', 'resting')
-        self.passenger_count = state_data.get('passenger_count', 0)
-        self.target_floors = state_data.get('target_floors', [])
+        """更新状态"""
+        self.current_level = state_data.get('current_level', 0)
+        self.heading = state_data.get('heading', 'none')
+        self.status = state_data.get('status', 'idle')
+        self.load_count = state_data.get('load_count', 0)
+        self.targets = state_data.get('targets', [])
         self.update()
 
 
-class FloorRequestWidget(QWidget):
-    """楼层请求可视化组件"""
+class CallIndicatorPanel(QWidget):
+    """呼叫指示面板"""
     
-    def __init__(self, max_floors=10):
+    def __init__(self, max_levels=10):
         super().__init__()
-        self.max_floors = max_floors
-        self.up_requests = set()
-        self.down_requests = set()
+        self.max_levels = max_levels
+        self.up_calls = set()
+        self.down_calls = set()
+        self.setFixedWidth(120)
+        
+    def paintEvent(self, event):
+        """绘制呼叫指示"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # 标题
+        painter.setPen(QColor(80, 80, 80))
+        painter.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        painter.drawText(10, 25, "呼叫信号")
+        
+        # 绘制楼层呼叫
+        level_height = (self.height() - 50) / self.max_levels
+        
+        for i in range(self.max_levels + 1):
+            y = int(self.height() - 20 - (i * level_height))
+            
+            # 楼层标签
+            painter.setPen(QColor(120, 120, 120))
+            painter.setFont(QFont("Arial", 8))
+            painter.drawText(10, y + 4, f"F{i}")
+            
+            # 上行呼叫
+            if i in self.up_calls:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(244, 67, 54))
+                painter.drawEllipse(50, y - 4, 12, 12)
+                painter.setPen(QColor(255, 255, 255))
+                painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+                painter.drawText(50, y - 4, 12, 12, Qt.AlignmentFlag.AlignCenter, "↑")
+            
+            # 下行呼叫
+            if i in self.down_calls:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(33, 150, 243))
+                painter.drawEllipse(75, y - 4, 12, 12)
+                painter.setPen(QColor(255, 255, 255))
+                painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+                painter.drawText(75, y - 4, 12, 12, Qt.AlignmentFlag.AlignCenter, "↓")
+    
+    def update_calls(self, up_calls, down_calls):
+        """更新呼叫状态"""
+        self.up_calls = up_calls
+        self.down_calls = down_calls
+        self.update()
+
+
+class ModernLogViewer(QTextEdit):
+    """现代日志查看器"""
+    
+    def __init__(self):
+        super().__init__()
+        self.setup_ui()
+        self.log_colors = {
+            'info': '#2196F3',
+            'success': '#4CAF50',
+            'warning': '#FF9800',
+            'error': '#F44336'
+        }
+        
+    def setup_ui(self):
+        """设置UI样式"""
+        self.setReadOnly(True)
+        self.setFont(QFont("Courier New", 9))
+        self.setStyleSheet("""
+            QTextEdit {
+                background-color: #263238;
+                color: #ECEFF1;
+                border: none;
+                border-radius: 8px;
+                padding: 10px;
+            }
+        """)
+        
+    def append_log(self, message, level='info'):
+        """添加日志"""
+        import time
+        timestamp = time.strftime("%H:%M:%S")
+        color = self.log_colors.get(level, '#ECEFF1')
+        
+        html = f'<span style="color: #78909C;">[{timestamp}]</span> '
+        html += f'<span style="color: {color};">{message}</span>'
+        
+        self.append(html)
+        
+        # 限制行数
+        doc = self.document()
+        if doc.lineCount() > 300:
+            cursor = self.textCursor()
+            cursor.movePosition(cursor.MoveOperation.Start)
+            cursor.movePosition(cursor.MoveOperation.Down, cursor.MoveMode.KeepAnchor, 50)
+            cursor.removeSelectedText()
+        
+        # 滚动到底部
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+
+
+class StatisticsPanel(QWidget):
+    """统计面板"""
+    
+    def __init__(self):
+        super().__init__()
+        self.stats = {
+            'total_calls': 0,
+            'completed_trips': 0,
+            'avg_wait_time': 0,
+            'efficiency': 100
+        }
         self.setup_ui()
         
     def setup_ui(self):
         """设置UI"""
-        self.setFixedSize(80, 400)
+        layout = QGridLayout(self)
+        layout.setSpacing(15)
         
-    def paintEvent(self, event):
-        """绘制楼层请求"""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # 创建统计卡片
+        self.create_stat_card(layout, "总呼叫", "total_calls", 0, 0, "#2196F3")
+        self.create_stat_card(layout, "完成行程", "completed_trips", 0, 1, "#4CAF50")
+        self.create_stat_card(layout, "平均等待", "avg_wait_time", 1, 0, "#FF9800")
+        self.create_stat_card(layout, "运行效率", "efficiency", 1, 1, "#9C27B0")
         
-        # 背景
-        painter.fillRect(self.rect(), QColor(250, 250, 250))
-        
-        floor_height = self.height() / self.max_floors
-        
-        for i in range(self.max_floors + 1):
-            y = int(self.height() - (i * floor_height) - 1)
-            
-            # 楼层数字
-            painter.setPen(QColor(100, 100, 100))
-            painter.drawText(5, y - 2, f"F{i}")
-            
-            # 上行请求
-            if i in self.up_requests:
-                painter.setPen(QColor(255, 100, 100))
-                painter.drawText(40, y - 2, "↑")
-                
-            # 下行请求
-            if i in self.down_requests:
-                painter.setPen(QColor(100, 100, 255))
-                painter.drawText(60, y - 2, "↓")
-    
-    def update_requests(self, up_requests, down_requests):
-        """更新请求状态"""
-        self.up_requests = up_requests
-        self.down_requests = down_requests
-        self.update()
-
-
-class TerminalOutputWidget(QTextEdit):
-    """终端风格输出组件"""
-    
-    def __init__(self):
-        super().__init__()
-        self.setup_ui()
-        
-    def setup_ui(self):
-        """设置终端样式"""
-        self.setReadOnly(True)
-        self.setFont(QFont("Consolas", 9))
-        self.setStyleSheet("""
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
-                border: 1px solid #3c3c3c;
-                border-radius: 5px;
-                padding: 5px;
-            }
+    def create_stat_card(self, layout, title, key, row, col, color):
+        """创建统计卡片"""
+        card = QFrame()
+        card.setStyleSheet(f"""
+            QFrame {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {color}, stop:1 {QColor(color).lighter(120).name()});
+                border-radius: 10px;
+                padding: 15px;
+            }}
         """)
+        card.setFixedHeight(100)
         
-    def append_message(self, message):
-        """添加消息到终端"""
-        # 添加时间戳
-        timestamp = time.strftime("%H:%M:%S")
-        formatted_message = f"[{timestamp}] {message}"
+        card_layout = QVBoxLayout(card)
         
-        # 限制最大行数
-        max_lines = 200
-        lines = self.toPlainText().split('\n')
-        if len(lines) > max_lines:
-            self.setPlainText('\n'.join(lines[-max_lines:]))
-            
-        self.append(formatted_message)
+        # 标题
+        title_label = QLabel(title)
+        title_label.setStyleSheet("color: white; font-size: 12px;")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        # 自动滚动到底部
-        scrollbar = self.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        # 数值
+        value_label = QLabel("0")
+        value_label.setStyleSheet("color: white; font-size: 28px; font-weight: bold;")
+        value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        value_label.setObjectName(key)
+        
+        card_layout.addWidget(title_label)
+        card_layout.addWidget(value_label)
+        
+        layout.addWidget(card, row, col)
+        
+    def update_stats(self, stats):
+        """更新统计数据"""
+        self.stats.update(stats)
+        for key, value in stats.items():
+            label = self.findChild(QLabel, key)
+            if label:
+                if key == 'avg_wait_time':
+                    label.setText(f"{value:.1f}s")
+                elif key == 'efficiency':
+                    label.setText(f"{value}%")
+                else:
+                    label.setText(str(value))
 
 
-class VisualizableElevatorController(ElevatorController):
-    """
-    支持可视化的电梯控制器
-    """
+class VisualizationController(ElevatorController):
+    """可视化电梯控制器"""
     
     def __init__(self, server_url: str = "http://127.0.0.1:8000", debug: bool = False, signals=None):
         super().__init__(server_url, debug)
-        self.elevator_directions: Dict[int, str] = {}
-        self.elevator_target_floors: Dict[int, Set[int]] = {}
-        self.passenger_destinations: Dict[int, Dict[int, int]] = {}
-        self.max_floor = 0
-        self.floor_requests: Dict[str, Set[int]] = {"up": set(), "down": set()}
-        self.elevator_resting_floors: Dict[int, int] = {}
-        self.elevator_states: Dict[int, str] = {}
         self.signals = signals
-        self.actual_elevator_count = 0
+        
+        # 状态管理
+        self.unit_state = {}
+        self.unit_heading = {}
+        self.service_queue = {}
+        self.passenger_registry = {}
+        self.pending_calls = {"up": set(), "down": set()}
+        
+        self.total_levels = 0
+        self.unit_capacity = 10
+        self.zone_assignment = {}
+        
+        # 统计
+        self.stats = {
+            'total_calls': 0,
+            'completed_trips': 0,
+            'avg_wait_time': 0,
+            'efficiency': 100
+        }
 
     def on_init(self, elevators: List[ProxyElevator], floors: List[ProxyFloor]) -> None:
         """初始化"""
-        print(" 智能SCAN电梯算法初始化 - 可视化版本")
-        print(f"   管理 {len(elevators)} 部电梯")
-        print(f"   服务 {len(floors)} 层楼")
+        self.total_levels = len(floors) - 1
+        self._emit_log(f"系统启动 | {len(elevators)}台电梯 | {len(floors)}层楼", "success")
         
-        # 记录实际电梯数量
-        self.actual_elevator_count = len(elevators)
-        
-        # 获取最大楼层数
-        self.max_floor = len(floors) - 1
-        
-        # 初始化每个电梯的状态
-        for i, elevator in enumerate(elevators):
-            self.elevator_directions[elevator.id] = "up"
-            self.elevator_target_floors[elevator.id] = set()
-            self.passenger_destinations[elevator.id] = {}
-            self.elevator_states[elevator.id] = 'resting'
+        for idx, unit in enumerate(elevators):
+            self.unit_state[unit.id] = "idle"
+            self.unit_heading[unit.id] = "none"
+            self.service_queue[unit.id] = []
+            self.passenger_registry[unit.id] = {}
             
-            # 计算初始休息楼层
-            resting_floor = self._calculate_resting_floor(i, len(elevators))
-            self.elevator_resting_floors[elevator.id] = resting_floor
+            home_level = self._calculate_home_position(idx, len(elevators))
+            self.zone_assignment[unit.id] = self._get_service_zone(idx, len(elevators))
             
-            # 移动到初始休息楼层
-            elevator.go_to_floor(resting_floor, immediate=True)
-            print(f"   电梯 E{elevator.id} 初始休息位置: F{resting_floor}")
+            unit.go_to_floor(home_level, immediate=True)
+            self._emit_log(f"电梯{idx + 1} 初始化 @ F{home_level}", "info")
             
-            # 发送初始电梯状态
-            if self.signals:
-                elevator_data = {
-                    'id': elevator.id,
-                    'current_floor': elevator.current_floor,
-                    'direction': self.elevator_directions[elevator.id],
-                    'state': self.elevator_states[elevator.id],
-                    'passenger_count': len(elevator.passengers),
-                    'target_floors': list(self.elevator_target_floors[elevator.id])
-                }
-                self.signals.elevator_update.emit(elevator_data)
-        
-        if self.signals:
-            self.signals.update_signal.emit(" 智能SCAN电梯算法初始化 - 可视化版本")
-            self.signals.update_signal.emit(f"   管理 {self.actual_elevator_count} 部电梯")
-            self.signals.update_signal.emit(f"   服务 {self.max_floor + 1} 层楼")
-            for i, elevator in enumerate(elevators):
-                resting_floor = self._calculate_resting_floor(i, len(elevators))
-                self.signals.update_signal.emit(f"   电梯 E{elevator.id} 初始休息位置: F{resting_floor}")
+            # 发送初始状态
+            self._emit_unit_status(unit)
 
-    def _calculate_resting_floor(self, elevator_index: int, total_elevators: int) -> int:
-        """计算休息楼层"""
-        if total_elevators == 1:
-            return self.max_floor // 2
-        segment_size = (self.max_floor + 1) / total_elevators
-        return min(int(elevator_index * segment_size + segment_size / 2), self.max_floor)
+    def _calculate_home_position(self, index: int, total: int) -> int:
+        """计算初始位置"""
+        if total == 1:
+            return self.total_levels // 2
+        segment = (self.total_levels + 1) / total
+        return min(int(index * segment + segment / 2), self.total_levels)
+
+    def _get_service_zone(self, index: int, total: int) -> tuple:
+        """获取服务区域"""
+        if total == 1:
+            return (0, self.total_levels)
+        zone_size = (self.total_levels + 1) / total
+        start = int(index * zone_size)
+        end = int((index + 1) * zone_size) if index < total - 1 else self.total_levels
+        return (start, end)
 
     def on_passenger_call(self, passenger: ProxyPassenger, floor: ProxyFloor, direction: str) -> None:
-        """乘客呼叫回调"""
-        print(f" 乘客 {passenger.id} 在 F{floor.floor} 请求 {direction} 方向")
-        self.floor_requests[direction].add(floor.floor)
-        print(f"   当前请求 - 上行: {sorted(self.floor_requests['up'])}, 下行: {sorted(self.floor_requests['down'])}")
+        """处理呼叫"""
+        self.pending_calls[direction].add(floor.floor)
+        self.stats['total_calls'] += 1
         
-        # 智能选择电梯响应请求
-        self._smart_assign_elevator(floor.floor, direction)
+        self._emit_log(f"新呼叫 @ F{floor.floor} → {direction}", "warning")
+        self._emit_call_status()
         
-        if self.signals:
-            self.signals.update_signal.emit(f" 乘客 {passenger.id} 在 F{floor.floor} 请求 {direction} 方向")
-            self.signals.update_signal.emit(f"   当前请求 - 上行: {sorted(self.floor_requests['up'])}, 下行: {sorted(self.floor_requests['down'])}")
+        # 智能分配
+        self._intelligent_dispatch(floor.floor, direction)
 
-    def _smart_assign_elevator(self, request_floor: int, direction: str) -> None:
-        """智能分配电梯"""
-        # 首先寻找休息电梯
-        resting_elevators = []
-        for elevator in self.elevators:
-            if self.elevator_states[elevator.id] == 'resting':
-                distance = abs(elevator.current_floor - request_floor)
-                resting_elevators.append((distance, elevator.id, elevator))
+    def _intelligent_dispatch(self, target_floor: int, direction: str):
+        """智能派遣"""
+        candidates = []
         
-        if resting_elevators:
-            # 使用最近的休息电梯
-            resting_elevators.sort(key=lambda x: x[0])
-            closest_distance, closest_id, closest_elevator = resting_elevators[0]
-            print(f"    唤醒休息电梯 E{closest_id} 处理 F{request_floor} 的请求 (距离: {closest_distance}层)")
-            self._wake_up_elevator(closest_elevator, request_floor, direction)
+        for unit in self.elevators:
+            score = self._calculate_score(unit, target_floor, direction)
+            if score > 0:
+                candidates.append((score, unit.id, unit))
+        
+        if candidates:
+            candidates.sort(reverse=True)
+            _, best_id, best_unit = candidates[0]
+            self._assign_task(best_unit, target_floor)
+            self._emit_log(f"分配电梯{best_id + 1} 响应 F{target_floor}", "info")
+
+    def _calculate_score(self, unit: ProxyElevator, target_floor: int, direction: str) -> float:
+        """计算分配评分"""
+        score = 0.0
+        state = self.unit_state[unit.id]
+        
+        if state == "idle":
+            distance = abs(unit.current_floor - target_floor)
+            score = 100 - distance
+            
+            zone_start, zone_end = self.zone_assignment[unit.id]
+            if zone_start <= target_floor <= zone_end:
+                score += 50
+        
+        elif state == "moving":
+            heading = self.unit_heading[unit.id]
+            if heading == direction:
+                if (heading == "up" and unit.current_floor < target_floor) or \
+                   (heading == "down" and unit.current_floor > target_floor):
+                    score = 80 - abs(unit.current_floor - target_floor)
+                    load_factor = len(unit.passengers) / self.unit_capacity
+                    score *= (1 - load_factor * 0.5)
+        
+        return score
+
+    def _assign_task(self, unit: ProxyElevator, target_floor: int):
+        """分配任务"""
+        if target_floor not in self.service_queue[unit.id]:
+            self.service_queue[unit.id].append(target_floor)
+        
+        if self.unit_state[unit.id] == "idle":
+            self.unit_state[unit.id] = "moving"
+            self._execute_next(unit)
+
+    def _execute_next(self, unit: ProxyElevator):
+        """执行下一任务"""
+        queue = self.service_queue[unit.id]
+        if not queue:
+            self.unit_state[unit.id] = "idle"
+            self.unit_heading[unit.id] = "none"
+            self._emit_unit_status(unit)
             return
         
-        # 没有休息电梯时，寻找可以响应的工作中空载电梯
-        working_candidate = self._find_working_elevator_candidate(request_floor, direction)
-        if working_candidate:
-            benefit, elevator_id, elevator = working_candidate
-            print(f"    智能响应: E{elevator_id} 响应 F{request_floor} 的请求 (顺路接人)")
-            self._redirect_elevator(elevator, request_floor, direction)
-            return
+        current = unit.current_floor
+        heading = self.unit_heading[unit.id]
         
-        print(f"    无合适电梯可用，等待扫描中的电梯自然处理请求")
-
-    def _find_working_elevator_candidate(self, request_floor: int, direction: str):
-        """寻找工作电梯候选"""
-        best_candidate = None
-        best_benefit = 0
-        
-        for elevator in self.elevators:
-            elevator_id = elevator.id
-            
-            # 只考虑工作中的空载电梯
-            if not (self.elevator_states[elevator_id] == 'scanning' and 
-                   len(elevator.passengers) == 0 and 
-                   len(self.elevator_target_floors[elevator_id]) > 0):
-                continue
-            
-            current_floor = elevator.current_floor
-            current_direction = self.elevator_directions[elevator_id]
-            current_targets = self.elevator_target_floors[elevator_id]
-            
-            if not current_targets:
-                continue
-                
-            # 获取当前主要目标
-            current_target = min(current_targets) if current_direction == 'up' else max(current_targets)
-            
-            # 检查响应条件
-            direction_ok = self._is_direction_matching(current_floor, request_floor, current_direction)
-            on_the_way = self._is_on_the_way(current_floor, current_target, request_floor, current_direction)
-            
-            if direction_ok and on_the_way:
-                distance_to_target = abs(current_floor - current_target)
-                distance_to_request = abs(current_floor - request_floor)
-                benefit = distance_to_target - distance_to_request
-                
-                if benefit > best_benefit:
-                    best_benefit = benefit
-                    best_candidate = (benefit, elevator_id, elevator)
-        
-        return best_candidate
-
-    def _is_direction_matching(self, current_floor: int, request_floor: int, current_direction: str) -> bool:
-        """检查方向匹配"""
-        if current_direction == "up":
-            return request_floor >= current_floor
+        if heading == "up" or heading == "none":
+            upper = [f for f in queue if f > current]
+            if upper:
+                next_floor = min(upper)
+                self.unit_heading[unit.id] = "up"
+            else:
+                lower = [f for f in queue if f < current]
+                next_floor = max(lower) if lower else queue[0]
+                self.unit_heading[unit.id] = "down" if lower else "none"
         else:
-            return request_floor <= current_floor
-
-    def _is_on_the_way(self, current_floor: int, current_target: int, request_floor: int, direction: str) -> bool:
-        """检查是否在路径上"""
-        if direction == "up":
-            return current_floor <= request_floor <= current_target
-        else:
-            return current_floor >= request_floor >= current_target
-
-    def _redirect_elevator(self, elevator: ProxyElevator, request_floor: int, direction: str) -> None:
-        """重定向电梯"""
-        elevator_id = elevator.id
-        self.elevator_target_floors[elevator_id].add(request_floor)
-        print(f"    E{elevator_id} 将响应 F{request_floor} 的请求")
-
-    def _wake_up_elevator(self, elevator: ProxyElevator, request_floor: int, direction: str) -> None:
-        """唤醒电梯"""
-        elevator_id = elevator.id
-        self.elevator_states[elevator_id] = 'scanning'
+            lower = [f for f in queue if f < current]
+            if lower:
+                next_floor = max(lower)
+                self.unit_heading[unit.id] = "down"
+            else:
+                upper = [f for f in queue if f > current]
+                next_floor = min(upper) if upper else queue[0]
+                self.unit_heading[unit.id] = "up" if upper else "none"
         
-        if request_floor > elevator.current_floor:
-            self.elevator_directions[elevator_id] = 'up'
-        elif request_floor < elevator.current_floor:
-            self.elevator_directions[elevator_id] = 'down'
-        else:
-            self.elevator_directions[elevator_id] = direction
-        
-        elevator.go_to_floor(request_floor)
-        self.elevator_target_floors[elevator_id].add(request_floor)
+        unit.go_to_floor(next_floor)
+        self._emit_unit_status(unit)
 
     def on_elevator_stopped(self, elevator: ProxyElevator, floor: ProxyFloor) -> None:
-        """电梯停靠回调"""
-        print(f" 电梯 E{elevator.id} 停靠在 F{floor.floor}")
+        """电梯停靠"""
+        if floor.floor in self.service_queue[elevator.id]:
+            self.service_queue[elevator.id].remove(floor.floor)
         
-        current_floor = floor.floor
-        direction = self.elevator_directions[elevator.id]
+        heading = self.unit_heading[elevator.id]
+        if heading in self.pending_calls:
+            self.pending_calls[heading].discard(floor.floor)
+            self._emit_call_status()
         
-        # 从目标集合中移除当前楼层
-        if current_floor in self.elevator_target_floors[elevator.id]:
-            self.elevator_target_floors[elevator.id].remove(current_floor)
+        self.unit_state[elevator.id] = "loading"
+        self._emit_log(f"电梯{elevator.id + 1} 停靠 @ F{floor.floor}", "success")
+        self._emit_unit_status(elevator)
         
-        # 从全局请求中移除当前楼层的同方向请求
-        if current_floor in self.floor_requests[direction]:
-            self.floor_requests[direction].remove(current_floor)
-            print(f"   移除 {direction} 方向在 F{current_floor} 的请求")
-        
-        if self.signals:
-            self.signals.update_signal.emit(f" 电梯 E{elevator.id} 停靠在 F{floor.floor}")
-            
-            # 更新电梯状态
-            elevator_data = {
-                'id': elevator.id,
-                'current_floor': elevator.current_floor,
-                'direction': self.elevator_directions[elevator.id],
-                'state': self.elevator_states[elevator.id],
-                'passenger_count': len(elevator.passengers),
-                'target_floors': list(self.elevator_target_floors[elevator.id])
-            }
-            self.signals.elevator_update.emit(elevator_data)
-        
-        # 检查是否还有任务
-        if self._has_pending_requests() or self._has_internal_requests(elevator):
-            self.elevator_states[elevator.id] = 'scanning'
-            self._assign_next_floor(elevator)
+        if self.service_queue[elevator.id] or self.passenger_registry[elevator.id]:
+            self._execute_next(elevator)
         else:
-            print(f"    电梯 E{elevator.id} 完成所有任务，在 F{current_floor} 进入休息状态")
-            self.elevator_states[elevator.id] = 'resting'
-            if self.signals:
-                self.signals.update_signal.emit(f" 电梯 E{elevator.id} 进入休息状态")
-
-    def _has_pending_requests(self) -> bool:
-        """检查未处理请求"""
-        return bool(self.floor_requests["up"] or self.floor_requests["down"])
-
-    def _has_internal_requests(self, elevator: ProxyElevator) -> bool:
-        """检查内部请求"""
-        return bool(self.passenger_destinations[elevator.id])
-
-    def _assign_next_floor(self, elevator: ProxyElevator) -> None:
-        """分配下一个楼层"""
-        current_floor = elevator.current_floor
-        direction = self.elevator_directions[elevator.id]
-        
-        target_floors = self._get_floors_in_direction(elevator, direction)
-        
-        if target_floors:
-            if direction == "up":
-                next_floor = min(target_floors)
-            else:
-                next_floor = max(target_floors)
-            
-            print(f"   SCAN决策: E{elevator.id} {direction}方向 -> F{next_floor}")
-            elevator.go_to_floor(next_floor)
-            self.elevator_target_floors[elevator.id].add(next_floor)
-        else:
-            new_direction = "down" if direction == "up" else "up"
-            print(f"   SCAN决策: E{elevator.id} 改变方向 {direction} -> {new_direction}")
-            self.elevator_directions[elevator.id] = new_direction
-            
-            new_target_floors = self._get_floors_in_direction(elevator, new_direction)
-            if new_target_floors:
-                if new_direction == "up":
-                    next_floor = min(new_target_floors)
-                else:
-                    next_floor = max(new_target_floors)
-                
-                print(f"   SCAN决策: E{elevator.id} {new_direction}方向 -> F{next_floor}")
-                elevator.go_to_floor(next_floor)
-                self.elevator_target_floors[elevator.id].add(next_floor)
-            else:
-                print(f"     电梯 E{elevator.id} 无任务可执行")
-                self.elevator_states[elevator.id] = 'resting'
-
-    def _get_floors_in_direction(self, elevator: ProxyElevator, direction: str) -> Set[int]:
-        """获取方向上的楼层"""
-        current_floor = elevator.current_floor
-        target_floors = set()
-        
-        # 内部选层请求
-        elevator_id = elevator.id
-        for passenger_id, destination in self.passenger_destinations[elevator_id].items():
-            if ((direction == "up" and destination > current_floor) or
-                (direction == "down" and destination < current_floor)):
-                target_floors.add(destination)
-        
-        # 外部呼叫请求
-        if direction == "up":
-            for floor_num in self.floor_requests["up"] | self.floor_requests["down"]:
-                if floor_num > current_floor:
-                    target_floors.add(floor_num)
-        else:
-            for floor_num in self.floor_requests["up"] | self.floor_requests["down"]:
-                if floor_num < current_floor:
-                    target_floors.add(floor_num)
-        
-        return target_floors
+            self.unit_state[elevator.id] = "idle"
+            self.unit_heading[elevator.id] = "none"
+            self._emit_unit_status(elevator)
 
     def on_passenger_board(self, elevator: ProxyElevator, passenger: ProxyPassenger) -> None:
-        """乘客上梯回调"""
-        print(f"    乘客{passenger.id} 上 E{elevator.id} (F{elevator.current_floor} -> F{passenger.destination})")
-        self.passenger_destinations[elevator.id][passenger.id] = passenger.destination
+        """乘客登梯"""
+        self.passenger_registry[elevator.id][passenger.id] = passenger.destination
         
-        if self.elevator_states[elevator.id] == 'resting':
-            self.elevator_states[elevator.id] = 'scanning'
-            print(f"    电梯 E{elevator.id} 因乘客上梯而激活")
+        if passenger.destination not in self.service_queue[elevator.id]:
+            self.service_queue[elevator.id].append(passenger.destination)
         
-        if self.signals:
-            self.signals.update_signal.emit(f"    乘客{passenger.id} 上 E{elevator.id} (F{elevator.current_floor} -> F{passenger.destination})")
+        self.stats['completed_trips'] += 1
+        self._emit_log(f"乘客登梯{elevator.id + 1} → F{passenger.destination}", "info")
+        self._emit_unit_status(elevator)
 
     def on_passenger_alight(self, elevator: ProxyElevator, passenger: ProxyPassenger, floor: ProxyFloor) -> None:
-        """乘客下梯回调"""
-        print(f"    乘客{passenger.id} 下 E{elevator.id} 在 F{floor.floor}")
-        if passenger.id in self.passenger_destinations[elevator.id]:
-            del self.passenger_destinations[elevator.id][passenger.id]
+        """乘客离梯"""
+        if passenger.id in self.passenger_registry[elevator.id]:
+            del self.passenger_registry[elevator.id][passenger.id]
         
-        if self.signals:
-            self.signals.update_signal.emit(f"    乘客{passenger.id} 下 E{elevator.id} 在 F{floor.floor}")
+        self._emit_unit_status(elevator)
 
     def on_elevator_idle(self, elevator: ProxyElevator) -> None:
-        """电梯空闲回调"""
-        print(f" 电梯 E{elevator.id} 在 F{elevator.current_floor} 层空闲")
-        
-        self.elevator_target_floors[elevator.id].clear()
-        
-        if self._has_pending_requests() or self._has_internal_requests(elevator):
-            self.elevator_states[elevator.id] = 'scanning'
-            self._assign_next_floor(elevator)
-        else:
-            self.elevator_states[elevator.id] = 'resting'
-            print(f"    电梯 E{elevator.id} 停在 F{elevator.current_floor} 休息")
-            
-            if self.signals:
-                self.signals.update_signal.emit(f" 电梯 E{elevator.id} 进入休息状态")
+        """电梯空闲"""
+        self.service_queue[elevator.id].clear()
+        self.unit_state[elevator.id] = "idle"
+        self.unit_heading[elevator.id] = "none"
+        self._emit_unit_status(elevator)
 
-    # 其他必要的回调方法
-    def on_event_execute_start(self, tick: int, events: List[SimulationEvent], elevators: List[ProxyElevator], floors: List[ProxyFloor]) -> None:
+    def _emit_log(self, message, level='info'):
+        """发送日志"""
+        if self.signals:
+            self.signals.log_message.emit(message, level)
+
+    def _emit_unit_status(self, unit):
+        """发送电梯状态"""
+        if self.signals:
+            data = {
+                'id': unit.id,
+                'current_level': unit.current_floor,
+                'heading': self.unit_heading[unit.id],
+                'status': self.unit_state[unit.id],
+                'load_count': len(unit.passengers),
+                'targets': self.service_queue[unit.id]
+            }
+            self.signals.unit_status.emit(data)
+
+    def _emit_call_status(self):
+        """发送呼叫状态"""
+        if self.signals:
+            data = {
+                'up_calls': self.pending_calls["up"],
+                'down_calls': self.pending_calls["down"]
+            }
+            self.signals.call_status.emit(data)
+
+    # 必需回调
+    def on_event_execute_start(self, tick, events, elevators, floors):
+        pass
+    
+    def on_event_execute_end(self, tick, events, elevators, floors):
+        pass
+    
+    def on_elevator_passing_floor(self, elevator, floor, direction):
+        pass
+    
+    def on_elevator_approaching(self, elevator, floor, direction):
+        pass
+    
+    def on_elevator_move(self, elevator, from_pos, to_pos, direction, status):
         pass
 
-    def on_event_execute_end(self, tick: int, events: List[SimulationEvent], elevators: List[ProxyElevator], floors: List[ProxyFloor]) -> None:
-        pass
 
-    def on_elevator_passing_floor(self, elevator: ProxyElevator, floor: ProxyFloor, direction: str) -> None:
-        pass
-
-    def on_elevator_approaching(self, elevator: ProxyElevator, floor: ProxyFloor, direction: str) -> None:
-        pass
-
-    def on_elevator_move(self, elevator: ProxyElevator, from_position: float, to_position: float, direction: str, status: str) -> None:
-        pass
-
-
-class ElevatorVisualization(QMainWindow):
-    """电梯调度可视化主窗口"""
+class ElevatorMonitorSystem(QMainWindow):
+    """电梯监控系统主窗口"""
     
     def __init__(self):
         super().__init__()
-        self.signals = ElevatorSignal()
-        self.elevator_widgets = {}
-        self.elevator_controller = None
-        self.actual_elevator_count = 2
+        self.signals = SignalBridge()
+        self.unit_cards = {}
+        self.controller = None
+        self.sim_thread = None
         self.setup_ui()
-        self.setup_connections()
-        self.simulation_thread = None
+        self.connect_signals()
         
     def setup_ui(self):
-        """设置用户界面"""
-        self.setWindowTitle("智能SCAN电梯调度算法可视化 - PyQt6")
-        self.setGeometry(100, 100, 1400, 900)
+        """设置UI"""
+        self.setWindowTitle("智能电梯监控系统")
+        self.setGeometry(50, 50, 1600, 900)
+        self.setStyleSheet("background-color: #FAFAFA;")
         
-        # 中央窗口
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(15, 15, 15, 15)
         
-        # 主布局
-        main_layout = QVBoxLayout(central_widget)
+        # 标题栏
+        header = self.create_header()
+        main_layout.addWidget(header)
         
-        # 上部：电梯状态面板
-        elevator_panel = self.create_elevator_panel()
-        main_layout.addWidget(elevator_panel, 3)
+        # 内容区域
+        content_splitter = QSplitter(Qt.Orientation.Horizontal)
         
-        # 下部：控制面板和终端输出
-        bottom_panel = self.create_bottom_panel()
-        main_layout.addWidget(bottom_panel, 2)
+        # 左侧：呼叫指示器
+        self.call_panel = CallIndicatorPanel()
+        content_splitter.addWidget(self.call_panel)
         
-    def create_elevator_panel(self):
-        """创建电梯状态面板"""
-        panel = QGroupBox("电梯状态监控")
-        layout = QHBoxLayout(panel)
+        # 中间：电梯卡片区
+        self.cards_container = QWidget()
+        self.cards_layout = QHBoxLayout(self.cards_container)
+        self.cards_layout.setSpacing(20)
+        content_splitter.addWidget(self.cards_container)
         
-        # 请求面板
-        request_frame = QFrame()
-        request_frame.setFrameStyle(QFrame.Shape.Box)
-        request_layout = QVBoxLayout(request_frame)
+        # 右侧：日志和统计
+        right_panel = self.create_right_panel()
+        content_splitter.addWidget(right_panel)
         
-        request_label = QLabel("楼层请求")
-        request_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        request_layout.addWidget(request_label)
+        content_splitter.setStretchFactor(0, 1)
+        content_splitter.setStretchFactor(1, 4)
+        content_splitter.setStretchFactor(2, 2)
         
-        self.request_widget = FloorRequestWidget()
-        request_layout.addWidget(self.request_widget)
+        main_layout.addWidget(content_splitter)
         
-        layout.addWidget(request_frame)
+    def create_header(self):
+        """创建标题栏"""
+        header = QFrame()
+        header.setFixedHeight(80)
+        header.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #1976D2, stop:1 #2196F3);
+                border-radius: 10px;
+            }
+        """)
         
-        # 电梯面板 - 动态创建电梯组件
-        self.elevators_frame = QFrame()
-        self.elevators_layout = QHBoxLayout(self.elevators_frame)
-        layout.addWidget(self.elevators_frame)
+        layout = QHBoxLayout(header)
         
-        return panel
+        # 标题
+        title = QLabel("🏢 智能电梯监控系统")
+        title.setStyleSheet("color: white; font-size: 24px; font-weight: bold;")
+        layout.addWidget(title)
         
-    def create_bottom_panel(self):
-        """创建底部面板"""
-        panel = QWidget()
-        layout = QHBoxLayout(panel)
-        
-        # 左侧：控制面板
-        left_panel = self.create_control_panel()
-        layout.addWidget(left_panel, 1)
-        
-        # 右侧：终端输出
-        right_panel = self.create_terminal_panel()
-        layout.addWidget(right_panel, 2)
-        
-        return panel
-        
-    def create_control_panel(self):
-        """创建控制面板"""
-        panel = QGroupBox("控制面板")
-        layout = QVBoxLayout(panel)
+        layout.addStretch()
         
         # 控制按钮
-        control_layout = QVBoxLayout()
+        self.start_btn = QPushButton("▶ 启动")
+        self.pause_btn = QPushButton("⏸ 暂停")
+        self.reset_btn = QPushButton("🔄 重置")
         
-        self.start_btn = QPushButton("开始模拟")
-        self.pause_btn = QPushButton("暂停")
-        self.reset_btn = QPushButton("重置")
+        for btn in [self.start_btn, self.pause_btn, self.reset_btn]:
+            btn.setFixedSize(100, 40)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: white;
+                    color: #1976D2;
+                    border: none;
+                    border-radius: 20px;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #E3F2FD;
+                }
+                QPushButton:pressed {
+                    background-color: #BBDEFB;
+                }
+            """)
+            layout.addWidget(btn)
         
-        self.start_btn.setStyleSheet("""
-            QPushButton { 
-                background-color: #4CAF50; 
-                color: white; 
-                font-size: 14px;
-                padding: 10px;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
-        
-        self.pause_btn.setStyleSheet("""
-            QPushButton { 
-                background-color: #ff9800; 
-                color: white; 
-                font-size: 14px;
-                padding: 10px;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #e68900;
-            }
-        """)
-        
-        self.reset_btn.setStyleSheet("""
-            QPushButton { 
-                background-color: #f44336; 
-                color: white; 
-                font-size: 14px;
-                padding: 10px;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #da190b;
-            }
-        """)
-        
-        control_layout.addWidget(self.start_btn)
-        control_layout.addWidget(self.pause_btn)
-        control_layout.addWidget(self.reset_btn)
-        
-        # 添加弹性空间使按钮居中
-        control_layout.addStretch()
-        
-        layout.addLayout(control_layout)
-        
-        return panel
-        
-    def create_terminal_panel(self):
-        """创建终端输出面板"""
-        panel = QGroupBox("终端输出")
+        return header
+    
+    def create_right_panel(self):
+        """创建右侧面板"""
+        panel = QWidget()
         layout = QVBoxLayout(panel)
+        layout.setSpacing(15)
         
-        self.terminal_output = TerminalOutputWidget()
-        layout.addWidget(self.terminal_output)
+        # 统计面板
+        stats_group = QGroupBox("系统统计")
+        stats_group.setStyleSheet("""
+            QGroupBox {
+                font-size: 14px;
+                font-weight: bold;
+                color: #424242;
+                border: 2px solid #E0E0E0;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 15px;
+                padding: 0 5px;
+            }
+        """)
+        stats_layout = QVBoxLayout(stats_group)
+        self.stats_panel = StatisticsPanel()
+        stats_layout.addWidget(self.stats_panel)
+        layout.addWidget(stats_group)
+        
+        # 日志查看器
+        log_group = QGroupBox("系统日志")
+        log_group.setStyleSheet(stats_group.styleSheet())
+        log_layout = QVBoxLayout(log_group)
+        self.log_viewer = ModernLogViewer()
+        log_layout.addWidget(self.log_viewer)
+        layout.addWidget(log_group)
         
         return panel
     
-    def setup_connections(self):
-        """设置信号连接"""
+    def connect_signals(self):
+        """连接信号"""
         self.start_btn.clicked.connect(self.start_simulation)
         self.pause_btn.clicked.connect(self.pause_simulation)
         self.reset_btn.clicked.connect(self.reset_simulation)
         
-        # 连接更新信号
-        self.signals.update_signal.connect(self.update_terminal)
-        self.signals.elevator_update.connect(self.update_elevator_display)
-        self.signals.request_update.connect(self.update_request_display)
-    
-    def create_elevator_widgets(self, count):
-        """动态创建电梯组件"""
-        # 清除现有组件
-        for i in reversed(range(self.elevators_layout.count())): 
-            self.elevators_layout.itemAt(i).widget().setParent(None)
-        
-        self.elevator_widgets = {}
-        for i in range(count):
-            elevator_widget = ElevatorWidget(i)
-            self.elevator_widgets[i] = elevator_widget
-            self.elevators_layout.addWidget(elevator_widget)
+        self.signals.log_message.connect(self.log_viewer.append_log)
+        self.signals.unit_status.connect(self.update_unit_display)
+        self.signals.call_status.connect(self.update_call_display)
     
     def start_simulation(self):
-        """开始模拟"""
-        self.terminal_output.append_message("🚀 开始电梯调度模拟...")
+        """启动模拟"""
+        self.log_viewer.append_log("系统启动中...", "success")
         self.start_btn.setEnabled(False)
-        self.pause_btn.setEnabled(True)
         
-        # 创建电梯控制器
-        self.elevator_controller = VisualizableElevatorController(
+        # 创建控制器
+        self.controller = VisualizationController(
             server_url="http://127.0.0.1:8000",
             debug=True,
             signals=self.signals
         )
         
-        # 先创建2部电梯的显示（默认）
-        self.create_elevator_widgets(2)
+        # 创建默认电梯卡片
+        self.create_unit_cards(2)
         
-        # 在新线程中运行电梯算法
-        self.simulation_thread = threading.Thread(target=self.run_elevator_algorithm)
-        self.simulation_thread.daemon = True
-        self.simulation_thread.start()
+        # 启动模拟线程
+        self.sim_thread = threading.Thread(target=self.run_simulation)
+        self.sim_thread.daemon = True
+        self.sim_thread.start()
     
     def pause_simulation(self):
         """暂停模拟"""
-        self.terminal_output.append_message(" 模拟暂停")
-        self.start_btn.setEnabled(True)
-        self.pause_btn.setEnabled(False)
+        self.log_viewer.append_log("系统已暂停", "warning")
     
     def reset_simulation(self):
         """重置模拟"""
-        self.terminal_output.append_message(" 重置模拟")
-        self.terminal_output.clear()
+        self.log_viewer.append_log("系统已重置", "info")
+        self.log_viewer.clear()
         
-        # 重置电梯状态
-        for elevator_id, widget in self.elevator_widgets.items():
-            widget.update_state({
-                'current_floor': 0,
-                'direction': 'up',
-                'state': 'resting',
-                'passenger_count': 0,
-                'target_floors': []
+        for card in self.unit_cards.values():
+            card.update_state({
+                'current_level': 0,
+                'heading': 'none',
+                'status': 'idle',
+                'load_count': 0,
+                'targets': []
             })
         
-        # 重置请求显示
-        self.request_widget.update_requests(set(), set())
+        self.call_panel.update_calls(set(), set())
     
-    def run_elevator_algorithm(self):
-        """运行电梯算法（在线程中）"""
-        try:
-            if self.elevator_controller:
-                self.elevator_controller.start()
-            else:
-                self.signals.update_signal.emit(" 未设置电梯控制器")
-        except Exception as e:
-            self.signals.update_signal.emit(f" 模拟错误: {str(e)}")
-    
-    def update_terminal(self, message):
-        """更新终端输出"""
-        self.terminal_output.append_message(message)
+    def create_unit_cards(self, count):
+        """创建电梯卡片"""
+        # 清除现有卡片
+        for i in reversed(range(self.cards_layout.count())):
+            self.cards_layout.itemAt(i).widget().setParent(None)
         
-        # 检测电梯数量信息
-        if "系统检测到" in message and "部电梯" in message:
-            try:
-                count = int(message.split(" ")[-2])  # 提取数字
-                if count != len(self.elevator_widgets):
-                    self.create_elevator_widgets(count)
-                    self.terminal_output.append_message(f" 已更新显示为 {count} 部电梯")
-            except:
-                pass
+        self.unit_cards = {}
+        for i in range(count):
+            card = ElevatorCard(i)
+            self.unit_cards[i] = card
+            self.cards_layout.addWidget(card)
     
-    def update_elevator_display(self, elevator_data):
+    def run_simulation(self):
+        """运行模拟"""
+        try:
+            if self.controller:
+                self.controller.start()
+        except Exception as e:
+            self.signals.log_message.emit(f"错误: {str(e)}", "error")
+    
+    def update_unit_display(self, data):
         """更新电梯显示"""
-        elevator_id = elevator_data.get('id')
-        if elevator_id in self.elevator_widgets:
-            self.elevator_widgets[elevator_id].update_state(elevator_data)
+        unit_id = data.get('id')
+        if unit_id in self.unit_cards:
+            self.unit_cards[unit_id].update_state(data)
     
-    def update_request_display(self, request_data):
-        """更新请求显示"""
-        up_requests = request_data.get('up_requests', set())
-        down_requests = request_data.get('down_requests', set())
-        self.request_widget.update_requests(up_requests, down_requests)
-
+    def update_call_display(self, data):
+        """更新呼叫显示"""
+        self.call_panel.update_calls(
+            data.get('up_calls', set()),
+            data.get('down_calls', set())
+        )
 
 def main():
     """主函数"""
     app = QApplication(sys.argv)
-    
-    # 创建可视化界面
-    window = ElevatorVisualization()
+    window = ElevatorMonitorSystem()
     window.show()
-    
-    # 启动应用
     sys.exit(app.exec())
 
 
