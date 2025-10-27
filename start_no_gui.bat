@@ -21,6 +21,7 @@ if not exist %VENV_DIR% (
     REM Activate virtual environment and install dependencies
     echo Installing dependencies...
     %VENV_DIR%\Scripts\pip install -r %REQUIREMENTS_FILE%
+    %VENV_DIR%\Scripts\pip install elevator-py
     
     if %errorlevel% neq 0 (
         echo Error: Failed to install dependencies.

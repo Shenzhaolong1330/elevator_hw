@@ -19,6 +19,7 @@ if [ ! -d "$VENV_DIR" ]; then
     echo "Installing dependencies..."
     source "$VENV_DIR/bin/activate"
     pip install -r "$REQUIREMENTS_FILE"
+    pip install elevator-py
     
     if [ $? -ne 0 ]; then
         echo "Error: Failed to install dependencies."
