@@ -11,6 +11,7 @@
 - 🔌 **模块化架构**：GUI和算法完全解耦，支持跨组对接
 - 📊 **实时监控**：电梯状态、呼叫信号、运行统计一目了然
 - ⚡ **能耗统计**：自动记录电梯移动次数和总能耗
+- 📈 **增强统计功能**：详细的性能指标和交通流量分析
 
 ---
 
@@ -18,14 +19,20 @@
 
 ```
 /repo_root
-├── gui.py                  # 原始GUI组件库
-├── gui_only.py            # 纯GUI模式（只显示不控制）
-├── algorithm_only.py      # 纯算法模式（只控制不显示）
-├── start.bat              # Windows启动脚本（GUI模式）
-├── start.sh               # Linux启动脚本（GUI模式）
-├── start_no_gui.bat       # Windows无头模式（纯算法）
-├── start_no_gui.sh        # Linux无头模式（纯算法）
-└── README.md              # 本文档
+├── algorithm_only.py       # 纯算法模式（只控制不显示）
+├── gui_only.py             # 纯GUI模式（只显示不控制）
+├── old/                    # 旧版本文件目录
+│   ├── elevator_backend_flask.py
+│   ├── elevator_frontend_html.html
+│   ├── elevator_planner.py
+│   ├── gui.py
+│   └── look_policy.py
+├── requirements.txt        # 项目依赖
+├── start_gui_algorithm.bat # Windows启动脚本（同时启动GUI和算法）
+├── start_gui_algorithm.sh  # Linux启动脚本（同时启动GUI和算法）
+├── start_no_gui.bat        # Windows无头模式（纯算法）
+├── start_no_gui.sh         # Linux无头模式（纯算法）
+└── README.md               # 本文档
 ```
 
 ---
@@ -37,28 +44,29 @@
 - **操作系统**: Windows 10/11, Linux, macOS
 
 ### Python包依赖
-- `elevator-py`: 电梯模拟器核心库
+- `elevator_saga`: 电梯模拟器核心库
 - `PyQt6`: GUI界面库（仅GUI模式需要）
+- `requests`: HTTP请求库
 
-**依赖会在启动脚本中自动安装，无需手动安装**
+**依赖会在启动脚本中自动安装，脚本会创建虚拟环境并管理依赖**
 
 ---
 
 ## 使用说明
 
-### 1️⃣ GUI模式（默认）
+### 1️⃣ 同时启动GUI和算法
 
-**适用场景**：启动可视化界面，配合其他组的算法使用
+**适用场景**：单机运行完整系统，同时启动GUI和算法组件
 
 #### Windows:
 ```bash
-start.bat
+start_gui_algorithm.bat
 ```
 
 #### Linux/macOS:
 ```bash
-chmod +x start.sh
-./start.sh
+chmod +x start_gui_algorithm.sh
+./start_gui_algorithm.sh
 ```
 
 **操作步骤**：
@@ -82,6 +90,28 @@ start_no_gui.bat
 ```bash
 chmod +x start_no_gui.sh
 ./start_no_gui.sh
+```
+
+### 3️⃣ 纯GUI模式
+
+**适用场景**：只运行GUI界面，配合其他组的算法使用
+
+#### Windows:
+```bash
+# 设置环境变量
+set ELEVATOR_CLIENT_TYPE=gui
+
+# 启动GUI
+python gui_only.py
+```
+
+#### Linux/macOS:
+```bash
+# 设置环境变量
+export ELEVATOR_CLIENT_TYPE=gui
+
+# 启动GUI
+python gui_only.py
 ```
 
 **操作步骤**：
@@ -131,7 +161,7 @@ chmod +x start_no_gui.sh
 
 ### 架构设计
 
-本系统采用**客户端-服务器**架构，通过`elevator-py`模拟器作为服务器，GUI和算法作为独立客户端：
+本系统采用**客户端-服务器**架构，通过`elevator_saga`模拟器作为服务器，GUI和算法作为独立客户端：
 
 ```
 ┌─────────────────────┐
@@ -160,6 +190,7 @@ chmod +x start_no_gui.sh
 - ✅ 接收所有事件（`on_passenger_call`, `on_elevator_move` 等）
 - ✅ 更新界面显示
 - ✅ 记录统计数据
+- ✅ 增强的性能指标和交通流量分析
 - ❌ **不调用** `go_to_floor()` 等控制方法
 - ❌ 不进行任务分配和调度决策
 
@@ -169,7 +200,9 @@ chmod +x start_no_gui.sh
 - ✅ 接收所有事件
 - ✅ **调用** `go_to_floor()` 控制电梯
 - ✅ 智能派梯和任务调度
+- ✅ 分区服务策略，提高效率
 - ✅ 能耗统计（1-3号电梯：1/次，4号电梯：2/次）
+- ✅ 基于SCAN算法的电梯调度
 - ❌ 无GUI显示
 
 ---
@@ -237,10 +270,10 @@ chmod +x start_no_gui.sh
 
 ## 常见问题
 
-### Q1: 提示找不到elevator-py？
-**A**: 启动脚本会自动安装依赖。如手动安装失败，请使用镜像源：
+### Q1: 提示找不到elevator_saga？
+**A**: 启动脚本会自动创建虚拟环境并安装依赖。如手动安装失败，请使用镜像源：
 ```bash
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ elevator-py PyQt6
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ elevator_saga PyQt6 requests
 ```
 
 ### Q2: GUI启动失败？
@@ -279,7 +312,9 @@ python -c "from PyQt6.QtWidgets import QApplication"
 - ✨ 支持跨组对接
 - ✨ 新增能耗统计功能
 - ✨ 优化SCAN调度算法
-- ✨ 完善启动脚本
+- ✨ 完善启动脚本，支持虚拟环境
+- ✨ 增强的GUI统计和监控功能
+- ✨ 改进的分区服务策略
 
 ### v1.0 (一阶段)
 - 🎉 初始版本

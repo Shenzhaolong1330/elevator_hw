@@ -2,7 +2,7 @@
 
 # Check if Python is installed
 if ! command -v python3 &> /dev/null; then
-    echo "Error: Python3 not found. Please install Python3 3.8+ first."
+    echo "Error: Python3 not found. Please install Python3 first."
     exit 1
 fi
 
@@ -29,15 +29,18 @@ fi
 # Activate virtual environment
 source "$VENV_DIR/bin/activate"
 
-# Set client type
-export ELEVATOR_CLIENT_TYPE=algorithm
+# Start GUI program and algorithm program
+echo "Starting Elevator Monitoring System..."
+python gui_only.py &
+GUI_PID=$!
 
-# Start algorithm program only
 echo "Starting Elevator Scheduling Algorithm..."
-python3 algorithm_only.py
+python algorithm_only.py &
+ALGORITHM_PID=$!
 
-if [ $? -ne 0 ]; then
-    echo ""
-    echo "Error: Algorithm failed to start."
-    exit 1
-fi
+echo "Programs started successfully!"
+echo "GUI PID: $GUI_PID"
+echo "Algorithm PID: $ALGORITHM_PID"
+
+# Wait for user to exit
+read -p "Press Enter to exit..."

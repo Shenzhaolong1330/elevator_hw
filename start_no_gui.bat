@@ -1,34 +1,49 @@
 
 @echo off
-REM 智能电梯调度系统 - Windows无头模式（纯算法）
-chcp 65001 >nul
 
-echo ====================================
-echo 智能电梯调度算法 - 无头模式
-echo ====================================
-echo.
-
-REM 检查Python
+REM Check if Python is installed
 python --version >nul 2>&1
-if errorlevel 1 (
-    echo [错误] 未找到Python，请先安装Python 3.8+
+if %errorlevel% neq 0 (
+    echo Error: Python not found. Please install Python 3.8+ first.
     pause
     exit /b 1
 )
 
-echo [1/2] 检查依赖包...
-python -m pip install --quiet elevator-py 2>nul
-if errorlevel 1 (
-    echo [警告] 使用国内镜像源重试...
-    python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ elevator-py
+REM Set environment variables
+set VENV_DIR=venv
+set REQUIREMENTS_FILE=requirements.txt
+
+REM Check if virtual environment exists
+if not exist %VENV_DIR% (
+    echo Creating virtual environment...
+    python -m venv %VENV_DIR%
+    
+    REM Activate virtual environment and install dependencies
+    echo Installing dependencies...
+    %VENV_DIR%\Scripts\pip install -r %REQUIREMENTS_FILE%
+    
+    if %errorlevel% neq 0 (
+        echo Error: Failed to install dependencies.
+        pause
+        exit /b 1
+    )
 )
 
-echo [2/2] 启动算法控制器...
+REM Activate virtual environment
+call %VENV_DIR%\Scripts\activate
+
+REM Set client type
 set ELEVATOR_CLIENT_TYPE=algorithm
+
+REM Start algorithm program only
+echo Starting Elevator Scheduling Algorithm...
 python algorithm_only.py
 
-if errorlevel 1 (
+if %errorlevel% neq 0 (
     echo.
-    echo [错误] 算法启动失败
+    echo Error: Algorithm failed to start.
     pause
+    exit /b 1
 )
+
+pause
